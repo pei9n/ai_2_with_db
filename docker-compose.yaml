@@ -1,0 +1,38 @@
+services:
+  app:
+    build: ./app
+    env_file:
+      - ./app/.env
+    depends_on:
+      - database
+    restart: unless-stopped
+
+  web-proxy:
+    build: ./web-proxy
+    ports:
+      - "80:80"
+    depends_on:
+      - app
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:management
+    ports:
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    restart: unless-stopped
+
+  database:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ml_app
+      POSTGRES_USER: ml_user
+      POSTGRES_PASSWORD: ml_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  rabbitmq_data:
+  postgres_data:
