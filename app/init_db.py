@@ -1,5 +1,5 @@
 from database import SessionLocal
-from models import User, MLModel
+from orm_models import UserORM, MLModelORM
 
 
 def init_demo_data():
@@ -7,19 +7,19 @@ def init_demo_data():
     db = SessionLocal()
 
     # Проверяем, есть ли уже данные
-    if db.query(User).first():
+    if db.query(UserORM).first():
         db.close()
         print("Данные уже есть, пропускаем")
         return
 
     # Пользователи
-    db.add(User(login="demo", password="demo123", role="user", balance=100))
-    db.add(User(login="admin", password="admin123", role="admin", balance=1000))
+    db.add(UserORM(login="demo", password="demo123", role="UserORM", balance=100))
+    db.add(UserORM(login="admin", password="admin123", role="admin", balance=1000))
 
     # ML-модели
-    db.add(MLModel(name="Распознавание цифр v1", description="Базовая", cost=5))
-    db.add(MLModel(name="Распознавание цифр v2", description="Точная", cost=10))
-    db.add(MLModel(name="Премиум модель", description="С объяснением", cost=20))
+    db.add(MLModelORM(name="Распознавание цифр v1", description="Базовая", cost=5))
+    db.add(MLModelORM(name="Распознавание цифр v2", description="Точная", cost=10))
+    db.add(MLModelORM(name="Премиум модель", description="С объяснением", cost=20))
 
     db.commit()
     db.close()
