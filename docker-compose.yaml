@@ -5,6 +5,29 @@ services:
       - ./app/.env
     depends_on:
       - database
+      - rabbitmq
+    restart: unless-stopped
+
+  worker-1:
+    build: ./app
+    env_file:
+      - ./app/.env
+    environment:
+      - WORKER_ID=worker-1
+    command: python worker.py
+    depends_on:
+      - rabbitmq
+    restart: unless-stopped
+
+  worker-2:
+    build: ./app
+    env_file:
+      - ./app/.env
+    environment:
+      - WORKER_ID=worker-2
+    command: python worker.py
+    depends_on:
+      - rabbitmq
     restart: unless-stopped
 
   web-proxy:
