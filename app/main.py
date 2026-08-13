@@ -58,6 +58,18 @@ def register(data: RegisterRequest):
     db.close()
     return {"id": user.id, "login": user.login, "role": user.role, "balance": user.balance}
 
+@app.post("/auth/login")
+def login(credentials: HTTPBasicCredentials = Depends(security)):
+    """Вход в систему — проверка логина и пароля"""
+    db = SessionLocal()
+    user = db.query(UserORM).filter(UserORM.login == credentials.username).first()
+    db.close()
+    
+    if not user or user.password != credentials.password:
+        raise HTTPException(401, "Неверный логин или пароль")
+    
+    return {"id": user.id, "login": user.login, "role": user.role, "balance": user.balance}
+
 
 @app.get("/users/me")
 def me(user: UserORM = Depends(get_user)):
