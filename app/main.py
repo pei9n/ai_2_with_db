@@ -1,3 +1,7 @@
+import json
+import uuid
+import pika
+from datetime import datetime
 import os
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -5,7 +9,11 @@ from pydantic import BaseModel, Field
 from database import create_tables, SessionLocal
 from init_db import init_demo_data
 from service import deposit, predict, get_history, get_transactions
-from orm_models import UserORM
+from orm_models import UserORM, MLModelORM
+
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
+RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
+QUEUE_NAME = "ml_tasks"
 
 app = FastAPI(title="ML Digit Recognition API")
 security = HTTPBasic()
@@ -22,7 +30,8 @@ class DepositRequest(BaseModel):
 
 class PredictRequest(BaseModel):
     model_id: int = Field(gt=0)
-
+    x1: float = 1.2
+    x2: float = 5.7
 
 class ErrorResponse(BaseModel):
     status: str = "error"
@@ -89,11 +98,53 @@ def deposit_money(data: DepositRequest, user: UserORM = Depends(get_user)):
 
 @app.post("/predict")
 def make_prediction(data: PredictRequest, user: UserORM = Depends(get_user)):
+    """Отправить ML-задачу в очередь RabbitMQ"""
+    # Генерируем ID задачи
+    task_id = str(uuid.uuid4())
+    
+    # Проверяем модель
+    db = SessionLocal()
+    model = db.query(MLModelORM).filter(MLModelORM.id == data.model_id).first()
+    db.close()
+    
+    if not model:
+        raise HTTPException(404, "Модель не найдена")
+    
+    if user.balance < model.cost_predict:
+        raise HTTPException(402, f"Недостаточно средств! Нужно: {model.cost_predict}")
+    
+    # Формируем сообщение
+    message = {
+        "task_id": task_id,
+        "features": {"x1": data.x1, "x2": data.x2},
+        "model": model.name,
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    # Отправляем в RabbitMQ
     try:
-        result = predict(user.id, data.model_id)
-        return {"status": "ok", **result}
-    except ValueError as e:
-        raise HTTPException(status_code=402, detail=str(e))
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(host=RABBITMQ_HOST, port=RABBITMQ_PORT)
+        )
+        channel = connection.channel()
+        channel.queue_declare(queue=QUEUE_NAME, durable=True)
+        
+        channel.basic_publish(
+            exchange='',
+            routing_key=QUEUE_NAME,
+            body=json.dumps(message),
+            properties=pika.BasicProperties(delivery_mode=2)
+        )
+        connection.close()
+    except Exception as e:
+        raise HTTPException(500, f"Ошибка RabbitMQ: {e}")
+    
+    return {
+        "status": "accepted",
+        "task_id": task_id,
+        "message": "Задача отправлена в очередь",
+        "model": model.name
+    }
 
 
 @app.get("/history/tasks")
@@ -116,4 +167,4 @@ def health():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("APP_PORT", "8000")))
-# v1.1
+
