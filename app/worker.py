@@ -1,85 +1,90 @@
 import os
 import json
-import time
-from datetime import datetime
 import pika
+from datetime import datetime
+from database import SessionLocal
+from orm_models import MLTaskORM, UserORM, TransactionORM
 
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
-RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
-QUEUE_NAME = "ml_tasks"
 WORKER_ID = os.getenv("WORKER_ID", "worker-1")
+QUEUE_NAME = "ml_tasks"
 
 
-def mock_predict(features):
-    """Mock ML-модель"""
-    result = features.get("x1", 0) * 2 + features.get("x2", 0) * 3
-    return round(result, 2)
+def update_task_status(task_id, status, result=None):
+    """Обновить статус задачи в БД"""
+    db = SessionLocal()
+    task = db.query(MLTaskORM).filter(MLTaskORM.id == task_id).first()
+    if task:
+        task.status = status
+        if result:
+            task.result = result
+        db.commit()
+    db.close()
 
 
-def process_message(ch, method, properties, body):
-    """Обработка сообщения из очереди"""
+def refund_if_needed(task_id):
+    """Вернуть средства при ошибке"""
+    db = SessionLocal()
+    task = db.query(MLTaskORM).filter(MLTaskORM.id == task_id).first()
+    if task and task.status == "failed":
+        # Находим транзакцию списания
+        txn = db.query(TransactionORM).filter(
+            TransactionORM.task_id == task_id,
+            TransactionORM.type_of_tran == "charge"
+        ).first()
+        if txn:
+            # Возвращаем деньги
+            user = db.query(UserORM).filter(UserORM.id == task.user_id).first()
+            user.balance += txn.summa
+            db.add(TransactionORM(
+                type_of_tran="refund",
+                summa=txn.summa,
+                date_time=datetime.now(),
+                user_id=user.id,
+                task_id=task_id
+            ))
+            db.commit()
+    db.close()
+
+
+def callback(ch, method, properties, body):
+    """Обработка сообщения"""
     try:
-        message = json.loads(body)
-        task_id = message.get("task_id")
-        features = message.get("features", {})
-        model_name = message.get("model")
+        msg = json.loads(body)
+        task_id = msg["task_id"]
+        x1 = msg["features"]["x1"]
+        x2 = msg["features"]["x2"]
+        prediction = round(x1 * 2 + x2 * 3, 2)
         
-        print(f"[{WORKER_ID}] Получена задача: {task_id}")
-        print(f"[{WORKER_ID}] Модель: {model_name}")
-        print(f"[{WORKER_ID}] Фичи: {features}")
-        
-        # Валидация
-        if not task_id or not features:
-            print(f"[{WORKER_ID}] Ошибка: нет task_id или features")
-            ch.basic_ack(delivery_tag=method.delivery_tag)
-            return
-        
-        prediction = mock_predict(features)
-        
-        result = {
-            "task_id": task_id,
+        result = json.dumps({
             "prediction": prediction,
             "worker_id": WORKER_ID,
             "status": "success"
-        }
+        })
         
-        print(f"[{WORKER_ID}] Результат: {json.dumps(result)}")
-        print("-" * 50)
+        #  Обновляем статус в БД
+        update_task_status(task_id, "completed", result)
         
+        print(f"[{WORKER_ID}] Задача {task_id} выполнена: {prediction}")
         ch.basic_ack(delivery_tag=method.delivery_tag)
         
     except Exception as e:
-        print(f"[{WORKER_ID}] Ошибка обработки: {e}")
+        print(f"[{WORKER_ID}] Ошибка: {e}")
+        
+        # возвращаем деньги
+        if 'msg' in locals():
+            update_task_status(msg["task_id"], "failed")
+            refund_if_needed(msg["task_id"])
+        
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
 
-def start_worker():
-    """Запустить воркер"""
-    print(f"[{WORKER_ID}] Запущен, ожидание задач...")
-    
-    
-    connection = pika.BlockingConnection(
-        pika.ConnectionParameters(host=RABBITMQ_HOST, port=RABBITMQ_PORT)
-    )
-    channel = connection.channel()
-    
-    
-    channel.queue_declare(queue=QUEUE_NAME, durable=True)
-    
-    
-    channel.basic_qos(prefetch_count=1)  
-    channel.basic_consume(
-        queue=QUEUE_NAME,
-        on_message_callback=process_message
-    )
-    
-    
-    try:
-        channel.start_consuming()
-    except KeyboardInterrupt:
-        print(f"[{WORKER_ID}] Остановлен")
-        connection.close()
+connection = pika.BlockingConnection(
+    pika.ConnectionParameters(host=os.getenv("RABBITMQ_HOST", "rabbitmq"))
+)
+channel = connection.channel()
+channel.queue_declare(queue=QUEUE_NAME, durable=True)
+channel.basic_qos(prefetch_count=1)
+channel.basic_consume(queue=QUEUE_NAME, on_message_callback=callback)
 
-
-if __name__ == "__main__":
-    start_worker()
+print(f"[{WORKER_ID}] Запущен, жду task")
+channel.start_consuming()

@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 from database import create_tables, SessionLocal
 from init_db import init_demo_data
 from service import deposit, predict, get_history, get_transactions
-from orm_models import UserORM, MLModelORM
+from orm_models import UserORM, MLModelORM, TransactionORM, MLTaskORM
+from fastapi.responses import FileResponse
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
 RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
@@ -113,7 +114,29 @@ def make_prediction(data: PredictRequest, user: UserORM = Depends(get_user)):
     if user.balance < model.cost_predict:
         raise HTTPException(402, f"Недостаточно средств! Нужно: {model.cost_predict}")
     
-    # Формируем сообщение
+
+    user.balance -= model.cost_predict
+    db.add(TransactionORM(
+        type_of_tran="charge",
+        summa=model.cost_predict,
+        date_time=datetime.now(),
+        user_id=user.id,
+        task_id=task_id
+    ))
+    
+    
+    task = MLTaskORM(
+        id=task_id,
+        data=json.dumps({"x1": data.x1, "x2": data.x2}),
+        status="pending",
+        user_id=user.id,
+        model_id=model.id
+    )
+    db.add(task)
+    db.commit()
+    db.close()
+    
+    
     message = {
         "task_id": task_id,
         "features": {"x1": data.x1, "x2": data.x2},
@@ -121,14 +144,12 @@ def make_prediction(data: PredictRequest, user: UserORM = Depends(get_user)):
         "timestamp": datetime.now().isoformat()
     }
     
-    # Отправляем в RabbitMQ
     try:
         connection = pika.BlockingConnection(
             pika.ConnectionParameters(host=RABBITMQ_HOST, port=RABBITMQ_PORT)
         )
         channel = connection.channel()
         channel.queue_declare(queue=QUEUE_NAME, durable=True)
-        
         channel.basic_publish(
             exchange='',
             routing_key=QUEUE_NAME,
@@ -139,12 +160,7 @@ def make_prediction(data: PredictRequest, user: UserORM = Depends(get_user)):
     except Exception as e:
         raise HTTPException(500, f"Ошибка RabbitMQ: {e}")
     
-    return {
-        "status": "accepted",
-        "task_id": task_id,
-        "message": "Задача отправлена в очередь",
-        "model": model.name
-    }
+    return {"status": "accepted", "task_id": task_id}
 
 
 @app.get("/history/tasks")
@@ -158,10 +174,34 @@ def transactions_history(user: UserORM = Depends(get_user)):
     txns = get_transactions(user.id)
     return [{"type": t.type_of_tran, "summa": t.summa, "date": str(t.date_time)} for t in txns]
 
+@app.get("/")
+def home():
+    return FileResponse("static/index.html")
+
+
 
 @app.get("/health")
 def health():
     return {"status": "OK"}
+
+@app.get("/task/{task_id}")
+def get_task(task_id: str, user: UserORM = Depends(get_user)):
+    """Получить задачу по task_id"""
+    db = SessionLocal()
+    task = db.query(MLTaskORM).filter(MLTaskORM.id == task_id).first()
+    db.close()
+    
+    if not task:
+        raise HTTPException(404, "Задача не найдена")
+    if task.user_id != user.id:
+        raise HTTPException(403, "Нет доступа к этой задаче")
+    
+    return {
+        "task_id": task.id,
+        "status": task.status,
+        "result": task.result,
+        "created_at": str(task.created_at)
+    }
 
 
 if __name__ == "__main__":

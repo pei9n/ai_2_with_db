@@ -40,6 +40,7 @@ class TransactionORM(Base):
     summa = Column(Float, nullable=False)
     date_time = Column(DateTime, default=datetime.now)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    task_id = Column(String, nullable=True)
 
     # Связь
     user = relationship("UserORM", back_populates="transactions")
@@ -49,7 +50,7 @@ class MLTaskORM(Base):
     """Таблица: ML_task"""
     __tablename__ = "ml_tasks"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
+    id = Column(String, primary_key=True)
     data = Column(String, nullable=True)
     status = Column(String, default="pending")
     result = Column(String, nullable=True)  # JSON-строка с результатом
