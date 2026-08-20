@@ -17,9 +17,9 @@ def init_demo_data():
     db.add(UserORM(login="admin", password="admin123", role="admin", balance=1000))
 
     # ML-модели
-    db.add(MLModelORM(name="Распознавание цифр v1", description="Базовая", cost=5))
-    db.add(MLModelORM(name="Распознавание цифр v2", description="Точная", cost=10))
-    db.add(MLModelORM(name="Премиум модель", description="С объяснением", cost=20))
+    db.add(MLModelORM(name="Распознавание цифр v1", description="Базовая", cost_predict=5))
+    db.add(MLModelORM(name="Распознавание цифр v2", description="Точная", cost_predict=10))
+    db.add(MLModelORM(name="Премиум модель", description="С объяснением", cost_predict=20))
 
     db.commit()
     db.close()
