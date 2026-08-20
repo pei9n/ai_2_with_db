@@ -10,6 +10,7 @@ from database import create_tables, SessionLocal
 from init_db import init_demo_data
 from service import deposit, predict, get_history, get_transactions
 from orm_models import UserORM, MLModelORM, TransactionORM, MLTaskORM
+from fastapi.responses import FileResponse
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
 RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
@@ -172,6 +173,11 @@ def tasks_history(user: UserORM = Depends(get_user)):
 def transactions_history(user: UserORM = Depends(get_user)):
     txns = get_transactions(user.id)
     return [{"type": t.type_of_tran, "summa": t.summa, "date": str(t.date_time)} for t in txns]
+
+@app.get("/")
+def home():
+    return FileResponse("static/index.html")
+
 
 
 @app.get("/health")
