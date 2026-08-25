@@ -105,22 +105,25 @@ def make_prediction(data: PredictRequest, user: UserORM = Depends(get_user)):
     
     # Проверяем модель
     db = SessionLocal()
+    db_user = db.query(UserORM).filter(UserORM.id == user.id).first()
     model = db.query(MLModelORM).filter(MLModelORM.id == data.model_id).first()
-    db.close()
     
     if not model:
         raise HTTPException(404, "Модель не найдена")
     
-    if user.balance < model.cost_predict:
+    if db_user.balance < model.cost_predict:
         raise HTTPException(402, f"Недостаточно средств! Нужно: {model.cost_predict}")
+
+    model_name = model.name
     
 
-    user.balance -= model.cost_predict
+    db_user.balance -= model.cost_predict
+
     db.add(TransactionORM(
         type_of_tran="charge",
         summa=model.cost_predict,
         date_time=datetime.now(),
-        user_id=user.id,
+        user_id=db_user.id,
         task_id=task_id
     ))
     
@@ -129,7 +132,7 @@ def make_prediction(data: PredictRequest, user: UserORM = Depends(get_user)):
         id=task_id,
         data=json.dumps({"x1": data.x1, "x2": data.x2}),
         status="pending",
-        user_id=user.id,
+        user_id=db_user.id,
         model_id=model.id
     )
     db.add(task)
@@ -140,7 +143,7 @@ def make_prediction(data: PredictRequest, user: UserORM = Depends(get_user)):
     message = {
         "task_id": task_id,
         "features": {"x1": data.x1, "x2": data.x2},
-        "model": model.name,
+        "model": model_name,
         "timestamp": datetime.now().isoformat()
     }
     
