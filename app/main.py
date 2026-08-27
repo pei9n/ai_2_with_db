@@ -3,7 +3,7 @@ import uuid
 import pika
 from datetime import datetime
 import os
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
 from database import create_tables, SessionLocal
@@ -11,14 +11,24 @@ from init_db import init_demo_data
 from service import deposit, predict, get_history, get_transactions
 from orm_models import UserORM, MLModelORM, TransactionORM, MLTaskORM
 from fastapi.responses import FileResponse
+from fastapi.templating import Jinja2Templates
+from fastapi import Form
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
+
+
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
 RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
 QUEUE_NAME = "ml_tasks"
 
-app = FastAPI(title="ML Digit Recognition API")
-security = HTTPBasic()
 
+app = FastAPI(title="ML Digit Recognition API")
+app.add_middleware(SessionMiddleware, secret_key="my-secret-key")
+security = HTTPBasic()
+templates = Jinja2Templates(directory="/app/templates")
+app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 
 class RegisterRequest(BaseModel):
     login: str = Field(min_length=3, max_length=50)
@@ -47,38 +57,77 @@ def get_user(credentials: HTTPBasicCredentials = Depends(security)):
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
     return user
 
+def get_current_user(request: Request):
+    user_id = request.session.get("user_id")
+    if not user_id:
+        return None
+    db = SessionLocal()
+    user = db.query(UserORM).filter(UserORM.id == user_id).first()
+    db.close()
+    return user
 
 @app.on_event("startup")
 def startup():
     create_tables()
     init_demo_data()
 
+@app.get("/")
+def home(request: Request):
+    return templates.TemplateResponse(request, "index.html")
 
 
-@app.post("/auth/register")
-def register(data: RegisterRequest):
+@app.get("/login")
+def login_page(request: Request):
+    return templates.TemplateResponse(request, "login.html")
+
+
+@app.get("/register")
+def register_page(request: Request):
+    return templates.TemplateResponse(request, "register.html")
+
+
+@app.get("/dashboard")
+def dashboard_page(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    
     db = SessionLocal()
-    if db.query(UserORM).filter(UserORM.login == data.login).first():
+    transactions = db.query(TransactionORM).filter(TransactionORM.user_id == user.id).all()
+    tasks = db.query(MLTaskORM).filter(MLTaskORM.user_id == user.id).all()
+    db.close()
+    
+    return templates.TemplateResponse(request, "dashboard.html", {
+        "user": user,
+        "transactions": transactions,
+        "tasks": tasks
+    })
+
+
+@app.post("/register")
+def register_form(request: Request, login: str = Form(...), password: str = Form(...)):
+    db = SessionLocal()
+    if db.query(UserORM).filter(UserORM.login == login).first():
         db.close()
-        raise HTTPException(400, "Логин занят")
-    user = UserORM(login=data.login, password=data.password, role="user", balance=0)
+        return templates.TemplateResponse(request, "register.html", {"error": "Логин занят"})
+    
+    user = UserORM(login=login, password=password, role="user", balance=0)
     db.add(user)
     db.commit()
-    db.refresh(user)
     db.close()
-    return {"id": user.id, "login": user.login, "role": user.role, "balance": user.balance}
+    
+    return RedirectResponse("/login", status_code=303)
 
-@app.post("/auth/login")
-def login(credentials: HTTPBasicCredentials = Depends(security)):
-    """Вход в систему — проверка логина и пароля"""
+@app.post("/login")
+def login_form(request: Request, login: str = Form(...), password: str = Form(...)):
     db = SessionLocal()
-    user = db.query(UserORM).filter(UserORM.login == credentials.username).first()
+    user = db.query(UserORM).filter(UserORM.login == login).first()
     db.close()
+    if not user or user.password != password:
+        return templates.TemplateResponse(request, "login.html", {"error": "Неверный логин или пароль"})
     
-    if not user or user.password != credentials.password:
-        raise HTTPException(401, "Неверный логин или пароль")
-    
-    return {"id": user.id, "login": user.login, "role": user.role, "balance": user.balance}
+    request.session["user_id"] = user.id 
+    return RedirectResponse("/dashboard", status_code=303)
 
 
 @app.get("/users/me")
@@ -92,33 +141,72 @@ def balance(user: UserORM = Depends(get_user)):
 
 
 @app.post("/balance/deposit")
-def deposit_money(data: DepositRequest, user: UserORM = Depends(get_user)):
-    new_balance = deposit(user.id, data.amount)
-    return {"balance": new_balance, "message": f"Пополнено {data.amount}₽"}
-
-
-@app.post("/predict")
-def make_prediction(data: PredictRequest, user: UserORM = Depends(get_user)):
-    """Отправить ML-задачу в очередь RabbitMQ"""
-    # Генерируем ID задачи
-    task_id = str(uuid.uuid4())
+def deposit_form(request: Request, amount: str = Form(...)):
+    try:
+        amount_float = float(amount)
+    except ValueError:
+        return templates.TemplateResponse(request, "dashboard.html", {
+    "error": "Введите число",
+    "user": get_current_user(request)
+        })
     
-    # Проверяем модель
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    
+    amount_float = float(amount)
+    deposit(user.id, amount_float)
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+@app.post("/predict-form")
+def predict_form(
+    request: Request,
+    model_id: str = Form(...),
+    x1: str = Form("1.2"),
+    x2: str = Form("5.7")
+):
+    """Обработка формы ML-запроса"""
+    # Конвертируем
+    try:
+        model_id_int = int(model_id)
+        x1_float = float(x1)
+        x2_float = float(x2)
+    except ValueError:
+        return templates.TemplateResponse(request, "dashboard.html", {
+    "error": "Введите корректные числа",
+    "user": get_current_user(request)
+        })
+
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=303)
+    
+    # Получаем пользователя (пока demo id=1)
     db = SessionLocal()
     db_user = db.query(UserORM).filter(UserORM.id == user.id).first()
-    model = db.query(MLModelORM).filter(MLModelORM.id == data.model_id).first()
+    model = db.query(MLModelORM).filter(MLModelORM.id == model_id_int).first()
     
     if not model:
-        raise HTTPException(404, "Модель не найдена")
+        db.close()
+        return templates.TemplateResponse(request, "dashboard.html", {
+    "error": "Модель не найдена",
+    "user": get_current_user(request)
+        })
     
     if db_user.balance < model.cost_predict:
-        raise HTTPException(402, f"Недостаточно средств! Нужно: {model.cost_predict}")
+        db.close()
+        return templates.TemplateResponse(request, "dashboard.html", {
+    "error": "Недостаточно средств",
+    "user": get_current_user(request)
+        })
+    
+    task_id = str(uuid.uuid4())
 
     model_name = model.name
     
-
+    # Списание
     db_user.balance -= model.cost_predict
-
     db.add(TransactionORM(
         type_of_tran="charge",
         summa=model.cost_predict,
@@ -126,44 +214,34 @@ def make_prediction(data: PredictRequest, user: UserORM = Depends(get_user)):
         user_id=db_user.id,
         task_id=task_id
     ))
-    
-    
-    task = MLTaskORM(
+    db.add(MLTaskORM(
         id=task_id,
-        data=json.dumps({"x1": data.x1, "x2": data.x2}),
+        data=json.dumps({"x1": x1_float, "x2": x2_float}),
         status="pending",
         user_id=db_user.id,
         model_id=model.id
-    )
-    db.add(task)
+    ))
     db.commit()
     db.close()
     
-    
+    # Отправка в RabbitMQ
     message = {
-        "task_id": task_id,
-        "features": {"x1": data.x1, "x2": data.x2},
-        "model": model_name,
-        "timestamp": datetime.now().isoformat()
+    "task_id": task_id,
+    "features": {"x1": x1_float, "x2": x2_float},
+    "model": model_name,  # ← используйте сохранённую переменную
+    "timestamp": datetime.now().isoformat()
     }
     
     try:
-        connection = pika.BlockingConnection(
-            pika.ConnectionParameters(host=RABBITMQ_HOST, port=RABBITMQ_PORT)
-        )
+        connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
         channel = connection.channel()
         channel.queue_declare(queue=QUEUE_NAME, durable=True)
-        channel.basic_publish(
-            exchange='',
-            routing_key=QUEUE_NAME,
-            body=json.dumps(message),
-            properties=pika.BasicProperties(delivery_mode=2)
-        )
+        channel.basic_publish(exchange='', routing_key=QUEUE_NAME, body=json.dumps(message))
         connection.close()
     except Exception as e:
-        raise HTTPException(500, f"Ошибка RabbitMQ: {e}")
+        return templates.TemplateResponse(request, "dashboard.html", {"error": f"Ошибка: {e}"})
     
-    return {"status": "accepted", "task_id": task_id}
+    return RedirectResponse("/dashboard", status_code=303)
 
 
 @app.get("/history/tasks")
@@ -176,11 +254,6 @@ def tasks_history(user: UserORM = Depends(get_user)):
 def transactions_history(user: UserORM = Depends(get_user)):
     txns = get_transactions(user.id)
     return [{"type": t.type_of_tran, "summa": t.summa, "date": str(t.date_time)} for t in txns]
-
-@app.get("/")
-def home():
-    return FileResponse("static/index.html")
-
 
 
 @app.get("/health")
