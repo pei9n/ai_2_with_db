@@ -67,7 +67,7 @@ app/
 
 1. Клонировать репозиторий:
 bash
-git clone <URL>
+git clone <https://github.com/pei9n/ai_2_with_db.git>
 
 Запустить все сервисы
 docker compose up -d --build
