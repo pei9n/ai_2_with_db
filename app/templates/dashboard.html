@@ -5,6 +5,9 @@
 {% block content %}
 <div class="card">
     <h2>Личный кабинет</h2>
+    {% if error %}
+        <p class="error">{{ error }}</p>
+    {% endif %}
     <p>Баланс: <b>{{ user.balance }}₽</b></p>
 </div>
 

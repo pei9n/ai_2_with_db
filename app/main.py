@@ -97,11 +97,15 @@ def dashboard_page(request: Request):
     tasks = db.query(MLTaskORM).filter(MLTaskORM.user_id == user.id).all()
     db.close()
     
+    error = request.session.pop("error", None)
+    
     return templates.TemplateResponse(request, "dashboard.html", {
-        "user": user,
-        "transactions": transactions,
-        "tasks": tasks
-    })
+    "user": user,
+    "transactions": transactions,
+    "tasks": tasks,  # ← запятая здесь
+    "error": error
+})
+
 
 
 @app.post("/register")
@@ -173,11 +177,9 @@ def predict_form(
         x1_float = float(x1)
         x2_float = float(x2)
     except ValueError:
-        return templates.TemplateResponse(request, "dashboard.html", {
-    "error": "Введите корректные числа",
-    "user": get_current_user(request)
-        })
-
+        request.session["error"] = "Введите корректные числа"
+        return RedirectResponse("/dashboard", status_code=303)
+        
     user = get_current_user(request)
     if not user:
         return RedirectResponse("/login", status_code=303)
@@ -189,17 +191,13 @@ def predict_form(
     
     if not model:
         db.close()
-        return templates.TemplateResponse(request, "dashboard.html", {
-    "error": "Модель не найдена",
-    "user": get_current_user(request)
-        })
+        request.session["error"] = "Модель не найдена"
+        return RedirectResponse("/dashboard", status_code=303)
     
     if db_user.balance < model.cost_predict:
         db.close()
-        return templates.TemplateResponse(request, "dashboard.html", {
-    "error": "Недостаточно средств",
-    "user": get_current_user(request)
-        })
+        request.session["error"] = f"Недостаточно средств! Нужно: {model.cost_predict}"
+        return RedirectResponse("/dashboard", status_code=303)
     
     task_id = str(uuid.uuid4())
 
@@ -239,7 +237,7 @@ def predict_form(
         channel.basic_publish(exchange='', routing_key=QUEUE_NAME, body=json.dumps(message))
         connection.close()
     except Exception as e:
-        return templates.TemplateResponse(request, "dashboard.html", {"error": f"Ошибка: {e}"})
+        return RedirectResponse("/dashboard", status_code=303)
     
     return RedirectResponse("/dashboard", status_code=303)
 
