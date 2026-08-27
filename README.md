@@ -25,22 +25,35 @@
  Структура проекта
 
 project/
- app/
-  main.py # FastAPI приложение
+
+app/
+
+  main.py # FastAPI приложени
+  
   database.py # подключение к БД
+  
   orm_models.py # SQLAlchemy модели
+  
   service.py # бизнес-логика
+  
   init_db.py # демо-данные
+  
   worker.py # ML-воркер
+  
   templates/ # HTML шаблоны
+  
   static/ # CSS
+  
   requirements.txt
+  
   .env
+  
   Dockerfile
+  
  web-proxy/
   nginx.conf
   Dockerfile
-docker-compose.yml
+ docker-compose.yml
 
 
  Запуск
