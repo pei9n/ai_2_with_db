@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}Личный кабинет{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Личный кабинет</h2>
+    <p>Баланс: <b>{{ user.balance }}₽</b></p>
+</div>
+
+<div class="card">
+    <h3>Пополнить баланс</h3>
+    <form method="post" action="/balance/deposit">
+        <input type="number" name="amount" placeholder="Сумма" min="1" required>
+        <button type="submit">Пополнить</button>
+    </form>
+</div>
+
+<div class="card">
+    <h3>ML-запрос</h3>
+    <form method="post" action="/predict-form">
+        <input type="number" name="model_id" placeholder="ID модели" required>
+        <input type="number" name="x1" placeholder="X1" step="0.1">
+        <input type="number" name="x2" placeholder="X2" step="0.1">
+        <button type="submit">Отправить</button>
+    </form>
+    {% if prediction %}
+        <p class="success">Результат: {{ prediction }}</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h3>История транзакций</h3>
+    <table>
+        <tr><th>Дата</th><th>Тип</th><th>Сумма</th></tr>
+        {% for t in transactions %}
+        <tr>
+            <td>{{ t.date_time }}</td>
+            <td>{{ t.type_of_tran }}</td>
+            <td>{{ t.summa }}₽</td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+
+<div class="card">
+    <h3>История задач</h3>
+    <table>
+        <tr><th>ID</th><th>Статус</th><th>Результат</th></tr>
+        {% for task in tasks %}
+        <tr>
+            <td>{{ task.id }}</td>
+            <td>{{ task.status }}</td>
+            <td>{{ task.result }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endblock %}
