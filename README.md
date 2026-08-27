@@ -75,27 +75,49 @@ docker compose up -d --build
 Подождать 10-15 секунд (инициализация БД и демо-данных).
 
 http://localhost/health
+
 Доступ к сервисам
+
 Сервис	URL	Логин/Пароль
+
 Web-интерфейс	http://localhost	—
+
 Swagger API	http://localhost/docs	—
+
 RabbitMQ UI	http://localhost:15672	guest/guest
+
 PostgreSQL	localhost:5432	ml_user/ml_password
+
 Демо-пользователи
+
 Логин	Пароль	Баланс
+
 demo	demo123	100₽
+
 admin	admin123	1000₽
+
 REST API
+
 Метод	URL	Описание
+
 POST	/auth/register	Регистрация
+
 POST	/auth/login	Вход
+
 GET	/users/me	Данные пользователя
+
 GET	/balance	Баланс
+
 POST	/balance/deposit	Пополнение
+
 POST	/predict	ML-запрос
+
 GET	/history/tasks	История задач
+
 GET	/history/transactions	История транзакций
+
 GET	/task/{task_id}	Задача по ID
+
 
 Тестирование
 # Запустить тесты
